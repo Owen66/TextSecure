@@ -17,23 +17,20 @@
 package org.thoughtcrime.securesms.database.model;
 
 import android.content.Context;
+import android.support.annotation.NonNull;
 import android.text.SpannableString;
-import android.util.Log;
 
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.database.MmsDatabase;
-import org.thoughtcrime.securesms.database.documents.NetworkFailure;
+import org.thoughtcrime.securesms.database.SmsDatabase.Status;
 import org.thoughtcrime.securesms.database.documents.IdentityKeyMismatch;
-import org.thoughtcrime.securesms.mms.MediaNotFoundException;
+import org.thoughtcrime.securesms.database.documents.NetworkFailure;
 import org.thoughtcrime.securesms.mms.Slide;
 import org.thoughtcrime.securesms.mms.SlideDeck;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.Recipients;
-import org.thoughtcrime.securesms.util.FutureTaskListener;
-import org.thoughtcrime.securesms.util.ListenableFutureTask;
 
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 
 /**
  * Represents the message record model for MMS messages that contain
@@ -48,66 +45,33 @@ public class MediaMmsMessageRecord extends MessageRecord {
 
   private final Context context;
   private final int partCount;
-  private final ListenableFutureTask<SlideDeck> slideDeckFutureTask;
+  private final @NonNull SlideDeck slideDeck;
 
   public MediaMmsMessageRecord(Context context, long id, Recipients recipients,
                                Recipient individualRecipient, int recipientDeviceId,
-                               long dateSent, long dateReceived, int deliveredCount,
+                               long dateSent, long dateReceived, int receiptCount,
                                long threadId, Body body,
-                               ListenableFutureTask<SlideDeck> slideDeck,
+                               @NonNull SlideDeck slideDeck,
                                int partCount, long mailbox,
                                List<IdentityKeyMismatch> mismatches,
-                               List<NetworkFailure> failures)
+                               List<NetworkFailure> failures, int subscriptionId,
+                               long expiresIn, long expireStarted)
   {
-    super(context, id, body, recipients, individualRecipient, recipientDeviceId,
-          dateSent, dateReceived, threadId, DELIVERY_STATUS_NONE, deliveredCount, mailbox,
-          mismatches, failures);
+    super(context, id, body, recipients, individualRecipient, recipientDeviceId, dateSent,
+          dateReceived, threadId, Status.STATUS_NONE, receiptCount, mailbox, mismatches, failures,
+          subscriptionId, expiresIn, expireStarted);
 
-    this.context             = context.getApplicationContext();
-    this.partCount           = partCount;
-    this.slideDeckFutureTask = slideDeck;
+    this.context   = context.getApplicationContext();
+    this.partCount = partCount;
+    this.slideDeck = slideDeck;
   }
 
-  public ListenableFutureTask<SlideDeck> getSlideDeckFuture() {
-    return slideDeckFutureTask;
-  }
-
-  private SlideDeck getSlideDeckSync() {
-    try {
-      return slideDeckFutureTask.get();
-    } catch (InterruptedException e) {
-      Log.w(TAG, e);
-      return null;
-    } catch (ExecutionException e) {
-      Log.w(TAG, e);
-      return null;
-    }
+  public @NonNull SlideDeck getSlideDeck() {
+    return slideDeck;
   }
 
   public boolean containsMediaSlide() {
-    SlideDeck deck = getSlideDeckSync();
-    return deck != null && deck.containsMediaSlide();
-  }
-
-
-  public void fetchMediaSlide(final FutureTaskListener<Slide> listener) {
-    slideDeckFutureTask.addListener(new FutureTaskListener<SlideDeck>() {
-      @Override
-      public void onSuccess(SlideDeck deck) {
-        for (Slide slide : deck.getSlides()) {
-          if (slide.hasImage() || slide.hasVideo() || slide.hasAudio()) {
-            listener.onSuccess(slide);
-            return;
-          }
-        }
-        listener.onFailure(new MediaNotFoundException("no media slide found"));
-      }
-
-      @Override
-      public void onFailure(Throwable error) {
-        listener.onFailure(error);
-      }
-    });
+    return slideDeck.containsMediaSlide();
   }
 
   public int getPartCount() {
@@ -125,6 +89,17 @@ public class MediaMmsMessageRecord extends MessageRecord {
   }
 
   @Override
+  public boolean isMediaPending() {
+    for (Slide slide : getSlideDeck().getSlides()) {
+      if (slide.isInProgress() || slide.isPendingDownload()) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  @Override
   public SpannableString getDisplayBody() {
     if (MmsDatabase.Types.isDecryptInProgressType(type)) {
       return emphasisAdded(context.getString(R.string.MmsMessageRecord_decrypting_mms_please_wait));
@@ -137,7 +112,7 @@ public class MediaMmsMessageRecord extends MessageRecord {
     } else if (isLegacyMessage()) {
       return emphasisAdded(context.getString(R.string.MessageRecord_message_encrypted_with_a_legacy_protocol_version_that_is_no_longer_supported));
     } else if (!getBody().isPlaintext()) {
-      return emphasisAdded(context.getString(R.string.MessageNotifier_encrypted_message));
+      return emphasisAdded(context.getString(R.string.MessageNotifier_locked_message));
     }
 
     return super.getDisplayBody();

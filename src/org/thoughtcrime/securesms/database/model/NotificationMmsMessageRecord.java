@@ -20,6 +20,7 @@ import android.content.Context;
 import android.text.SpannableString;
 
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.database.SmsDatabase.Status;
 import org.thoughtcrime.securesms.database.MmsDatabase;
 import org.thoughtcrime.securesms.database.documents.NetworkFailure;
 import org.thoughtcrime.securesms.database.documents.IdentityKeyMismatch;
@@ -48,11 +49,13 @@ public class NotificationMmsMessageRecord extends MessageRecord {
                                       Recipient individualRecipient, int recipientDeviceId,
                                       long dateSent, long dateReceived, int receiptCount,
                                       long threadId, byte[] contentLocation, long messageSize,
-                                      long expiry, int status, byte[] transactionId, long mailbox)
+                                      long expiry, int status, byte[] transactionId, long mailbox,
+                                      int subscriptionId)
   {
     super(context, id, new Body("", true), recipients, individualRecipient, recipientDeviceId,
-          dateSent, dateReceived, threadId, DELIVERY_STATUS_NONE, receiptCount, mailbox,
-          new LinkedList<IdentityKeyMismatch>(), new LinkedList<NetworkFailure>());
+          dateSent, dateReceived, threadId, Status.STATUS_NONE, receiptCount, mailbox,
+          new LinkedList<IdentityKeyMismatch>(), new LinkedList<NetworkFailure>(), subscriptionId,
+          0, 0);
 
     this.contentLocation = contentLocation;
     this.messageSize     = messageSize;
@@ -108,6 +111,11 @@ public class NotificationMmsMessageRecord extends MessageRecord {
 
   @Override
   public boolean isMmsNotification() {
+    return true;
+  }
+
+  @Override
+  public boolean isMediaPending() {
     return true;
   }
 

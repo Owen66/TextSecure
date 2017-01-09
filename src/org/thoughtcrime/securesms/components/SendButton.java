@@ -9,6 +9,8 @@ import org.thoughtcrime.securesms.TransportOption;
 import org.thoughtcrime.securesms.TransportOptions;
 import org.thoughtcrime.securesms.TransportOptions.OnTransportChangedListener;
 import org.thoughtcrime.securesms.TransportOptionsPopup;
+import org.thoughtcrime.securesms.util.ViewUtil;
+import org.whispersystems.libsignal.util.guava.Optional;
 
 public class SendButton extends ImageButton
     implements TransportOptions.OnTransportChangedListener,
@@ -16,28 +18,29 @@ public class SendButton extends ImageButton
                View.OnLongClickListener
 {
 
-  private final TransportOptions      transportOptions;
-  private final TransportOptionsPopup transportOptionsPopup;
+  private final TransportOptions transportOptions;
+
+  private Optional<TransportOptionsPopup> transportOptionsPopup = Optional.absent();
 
   @SuppressWarnings("unused")
   public SendButton(Context context) {
     super(context);
-    this.transportOptions      = initializeTransportOptions(false);
-    this.transportOptionsPopup = initializeTransportOptionsPopup();
+    this.transportOptions = initializeTransportOptions(false);
+    ViewUtil.mirrorIfRtl(this, getContext());
   }
 
   @SuppressWarnings("unused")
   public SendButton(Context context, AttributeSet attrs) {
     super(context, attrs);
-    this.transportOptions      = initializeTransportOptions(false);
-    this.transportOptionsPopup = initializeTransportOptionsPopup();
+    this.transportOptions = initializeTransportOptions(false);
+    ViewUtil.mirrorIfRtl(this, getContext());
   }
 
   @SuppressWarnings("unused")
   public SendButton(Context context, AttributeSet attrs, int defStyle) {
     super(context, attrs, defStyle);
-    this.transportOptions      = initializeTransportOptions(false);
-    this.transportOptionsPopup = initializeTransportOptionsPopup();
+    this.transportOptions = initializeTransportOptions(false);
+    ViewUtil.mirrorIfRtl(this, getContext());
   }
 
   private TransportOptions initializeTransportOptions(boolean media) {
@@ -49,8 +52,11 @@ public class SendButton extends ImageButton
     return transportOptions;
   }
 
-  private TransportOptionsPopup initializeTransportOptionsPopup() {
-    return new TransportOptionsPopup(getContext(), this);
+  private TransportOptionsPopup getTransportOptionsPopup() {
+    if (!transportOptionsPopup.isPresent()) {
+      transportOptionsPopup = Optional.of(new TransportOptionsPopup(getContext(), this, this));
+    }
+    return transportOptionsPopup.get();
   }
 
   public boolean isManualSelection() {
@@ -77,14 +83,18 @@ public class SendButton extends ImageButton
     transportOptions.setDefaultTransport(type);
   }
 
-  @Override
-  public void onSelected(TransportOption option) {
-    transportOptions.setSelectedTransport(option.getType());
-    transportOptionsPopup.dismiss();
+  public void setDefaultSubscriptionId(Optional<Integer> subscriptionId) {
+    transportOptions.setDefaultSubscriptionId(subscriptionId);
   }
 
   @Override
-  public void onChange(TransportOption newTransport) {
+  public void onSelected(TransportOption option) {
+    transportOptions.setSelectedTransport(option);
+    getTransportOptionsPopup().dismiss();
+  }
+
+  @Override
+  public void onChange(TransportOption newTransport, boolean isManualSelection) {
     setImageResource(newTransport.getDrawable());
     setContentDescription(newTransport.getDescription());
   }
@@ -92,7 +102,7 @@ public class SendButton extends ImageButton
   @Override
   public boolean onLongClick(View v) {
     if (transportOptions.getEnabledTransports().size() > 1) {
-      transportOptionsPopup.display(getContext(), SendButton.this, transportOptions.getEnabledTransports());
+      getTransportOptionsPopup().display(transportOptions.getEnabledTransports());
       return true;
     }
 

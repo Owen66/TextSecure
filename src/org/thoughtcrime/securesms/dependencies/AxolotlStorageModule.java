@@ -2,10 +2,9 @@ package org.thoughtcrime.securesms.dependencies;
 
 import android.content.Context;
 
-import org.thoughtcrime.securesms.crypto.MasterSecret;
-import org.thoughtcrime.securesms.crypto.storage.TextSecureAxolotlStore;
+import org.thoughtcrime.securesms.crypto.storage.SignalProtocolStoreImpl;
 import org.thoughtcrime.securesms.jobs.CleanPreKeysJob;
-import org.whispersystems.libaxolotl.state.SignedPreKeyStore;
+import org.whispersystems.libsignal.state.SignedPreKeyStore;
 
 import dagger.Module;
 import dagger.Provides;
@@ -22,13 +21,13 @@ public class AxolotlStorageModule {
   @Provides SignedPreKeyStoreFactory provideSignedPreKeyStoreFactory() {
     return new SignedPreKeyStoreFactory() {
       @Override
-      public SignedPreKeyStore create(MasterSecret masterSecret) {
-        return new TextSecureAxolotlStore(context, masterSecret);
+      public SignedPreKeyStore create() {
+        return new SignalProtocolStoreImpl(context);
       }
     };
   }
 
   public static interface SignedPreKeyStoreFactory {
-    public SignedPreKeyStore create(MasterSecret masterSecret);
+    public SignedPreKeyStore create();
   }
 }

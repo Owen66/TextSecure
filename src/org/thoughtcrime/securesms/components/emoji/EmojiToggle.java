@@ -5,16 +5,15 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
-import android.view.View;
 import android.widget.ImageButton;
 
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.components.emoji.EmojiDrawer.EmojiDrawerListener;
 
-public class EmojiToggle extends ImageButton {
+public class EmojiToggle extends ImageButton implements EmojiDrawerListener {
 
   private Drawable emojiToggle;
   private Drawable imeToggle;
-  private OnClickListener listener;
 
   public EmojiToggle(Context context) {
     super(context);
@@ -31,46 +30,35 @@ public class EmojiToggle extends ImageButton {
     initialize();
   }
 
-  @Override
-  public void setOnClickListener(OnClickListener listener) {
-    this.listener = listener;
+  public void setToEmoji() {
+    setImageDrawable(emojiToggle);
   }
 
-  public void toggle() {
-    if (getDrawable() == emojiToggle) {
-      setImageDrawable(imeToggle);
-    } else {
-      setImageDrawable(emojiToggle);
-    }
+  public void setToIme() {
+    setImageDrawable(imeToggle);
   }
 
   private void initialize() {
-    initializeResources();
-    initializeListeners();
-  }
-
-  private void initializeResources() {
     int attributes[] = new int[] {R.attr.conversation_emoji_toggle,
-                                  R.attr.conversation_keyboard_toggle};
+        R.attr.conversation_keyboard_toggle};
 
     TypedArray drawables = getContext().obtainStyledAttributes(attributes);
     this.emojiToggle     = drawables.getDrawable(0);
     this.imeToggle       = drawables.getDrawable(1);
 
     drawables.recycle();
-
-    setImageDrawable(this.emojiToggle);
+    setToEmoji();
   }
 
-  private void initializeListeners() {
-    super.setOnClickListener(new OnClickListener() {
-      @Override
-      public void onClick(View v) {
-        toggle();
+  public void attach(EmojiDrawer drawer) {
+    drawer.setDrawerListener(this);
+  }
 
-        if (listener != null)
-          listener.onClick(v);
-      }
-    });
+  @Override public void onShown() {
+    setToIme();
+  }
+
+  @Override public void onHidden() {
+    setToEmoji();
   }
 }

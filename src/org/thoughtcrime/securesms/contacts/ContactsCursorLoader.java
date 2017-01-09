@@ -18,12 +18,23 @@ package org.thoughtcrime.securesms.contacts;
 
 import android.content.Context;
 import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.database.MergeCursor;
+import android.provider.ContactsContract;
+import android.support.annotation.NonNull;
 import android.support.v4.content.CursorLoader;
+import android.text.TextUtils;
 import android.util.Log;
 
-import junit.framework.Assert;
+import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.recipients.RecipientFactory;
+import org.thoughtcrime.securesms.recipients.Recipients;
+import org.thoughtcrime.securesms.util.DirectoryHelper;
+import org.thoughtcrime.securesms.util.DirectoryHelper.UserCapabilities.Capability;
+import org.thoughtcrime.securesms.util.NumberUtil;
 
-import java.util.concurrent.Semaphore;
+import java.util.ArrayList;
 
 /**
  * CursorLoader that initializes a ContactsDatabase instance
@@ -31,47 +42,84 @@ import java.util.concurrent.Semaphore;
  * @author Jake McGinty
  */
 public class ContactsCursorLoader extends CursorLoader {
-  private static final String TAG        = ContactsCursorLoader.class.getSimpleName();
-  private static final int    DB_PERMITS = 100;
 
-  private final Context          context;
-  private final String           filter;
-  private final boolean          pushOnly;
-  private final Semaphore        dbSemaphore = new Semaphore(DB_PERMITS);
-  private       ContactsDatabase db;
+  private static final String TAG = ContactsCursorLoader.class.getSimpleName();
 
-  public ContactsCursorLoader(Context context, String filter, boolean pushOnly) {
+  public final static int MODE_ALL        = 0;
+  public final static int MODE_PUSH_ONLY  = 1;
+  public final static int MODE_OTHER_ONLY = 2;
+
+  private final String filter;
+  private final int    mode;
+
+  public ContactsCursorLoader(Context context, int mode, String filter) {
     super(context);
-    this.context  = context;
-    this.filter   = filter;
-    this.pushOnly = pushOnly;
-    this.db       = new ContactsDatabase(context);
+
+    this.filter = filter;
+    this.mode   = mode;
   }
 
   @Override
   public Cursor loadInBackground() {
-    try {
-      dbSemaphore.acquire();
-      return db.query(filter, pushOnly);
-    } catch (InterruptedException ie) {
-      throw new AssertionError(ie);
-    } finally {
-      dbSemaphore.release();
+    ContactsDatabase  contactsDatabase = DatabaseFactory.getContactsDatabase(getContext());
+    ArrayList<Cursor> cursorList       = new ArrayList<>(3);
+
+    if (mode != MODE_OTHER_ONLY) {
+      cursorList.add(contactsDatabase.queryTextSecureContacts(filter));
     }
+
+    if (mode == MODE_ALL) {
+      cursorList.add(contactsDatabase.querySystemContacts(filter));
+    } else if (mode == MODE_OTHER_ONLY) {
+      cursorList.add(filterNonPushContacts(contactsDatabase.querySystemContacts(filter)));
+    }
+
+    if (!TextUtils.isEmpty(filter) && NumberUtil.isValidSmsOrEmail(filter)) {
+      MatrixCursor newNumberCursor = new MatrixCursor(new String[] {ContactsDatabase.ID_COLUMN,
+                                                                    ContactsDatabase.NAME_COLUMN,
+                                                                    ContactsDatabase.NUMBER_COLUMN,
+                                                                    ContactsDatabase.NUMBER_TYPE_COLUMN,
+                                                                    ContactsDatabase.LABEL_COLUMN,
+                                                                    ContactsDatabase.CONTACT_TYPE_COLUMN}, 1);
+
+      newNumberCursor.addRow(new Object[] {-1L, getContext().getString(R.string.contact_selection_list__unknown_contact),
+                                           filter, ContactsContract.CommonDataKinds.Phone.TYPE_CUSTOM,
+                                           "\u21e2", ContactsDatabase.NEW_TYPE});
+
+      cursorList.add(newNumberCursor);
+    }
+
+    return new MergeCursor(cursorList.toArray(new Cursor[0]));
   }
 
-  @Override
-  public void onReset() {
-    Log.w(TAG, "onReset()");
+  private @NonNull Cursor filterNonPushContacts(@NonNull Cursor cursor) {
     try {
-      dbSemaphore.acquire(DB_PERMITS);
-      db.close();
-      db = new ContactsDatabase(context);
-    } catch (InterruptedException ie) {
-      throw new AssertionError(ie);
+      final long startMillis = System.currentTimeMillis();
+      final MatrixCursor matrix = new MatrixCursor(new String[]{ContactsDatabase.ID_COLUMN,
+                                                                ContactsDatabase.NAME_COLUMN,
+                                                                ContactsDatabase.NUMBER_COLUMN,
+                                                                ContactsDatabase.NUMBER_TYPE_COLUMN,
+                                                                ContactsDatabase.LABEL_COLUMN,
+                                                                ContactsDatabase.CONTACT_TYPE_COLUMN});
+      while (cursor.moveToNext()) {
+        final String number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsDatabase.NUMBER_COLUMN));
+        final Recipients recipients = RecipientFactory.getRecipientsFromString(getContext(), number, true);
+
+        if (DirectoryHelper.getUserCapabilities(getContext(), recipients)
+                           .getTextCapability() != Capability.SUPPORTED)
+        {
+          matrix.addRow(new Object[]{cursor.getLong(cursor.getColumnIndexOrThrow(ContactsDatabase.ID_COLUMN)),
+                                     cursor.getString(cursor.getColumnIndexOrThrow(ContactsDatabase.NAME_COLUMN)),
+                                     number,
+                                     cursor.getString(cursor.getColumnIndexOrThrow(ContactsDatabase.NUMBER_TYPE_COLUMN)),
+                                     cursor.getString(cursor.getColumnIndexOrThrow(ContactsDatabase.LABEL_COLUMN)),
+                                     ContactsDatabase.NORMAL_TYPE});
+        }
+      }
+      Log.w(TAG, "filterNonPushContacts() -> " + (System.currentTimeMillis() - startMillis) + "ms");
+      return matrix;
     } finally {
-      dbSemaphore.release(DB_PERMITS);
+      cursor.close();
     }
-    super.onReset();
   }
 }

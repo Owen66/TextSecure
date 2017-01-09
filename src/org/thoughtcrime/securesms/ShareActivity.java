@@ -17,23 +17,41 @@
 
 package org.thoughtcrime.securesms;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+import android.os.Process;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.StructStat;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
-import android.webkit.MimeTypeMap;
+import android.view.View;
+import android.view.ViewGroup;
 
 import org.thoughtcrime.securesms.crypto.MasterSecret;
+import org.thoughtcrime.securesms.mms.PartAuthority;
+import org.thoughtcrime.securesms.providers.PersistentBlobProvider;
 import org.thoughtcrime.securesms.recipients.Recipients;
 import org.thoughtcrime.securesms.util.DynamicLanguage;
 import org.thoughtcrime.securesms.util.DynamicTheme;
+import org.thoughtcrime.securesms.util.FileUtils;
+import org.thoughtcrime.securesms.util.MediaUtil;
+import org.thoughtcrime.securesms.util.ViewUtil;
 
-import java.net.URLDecoder;
-
-import ws.com.google.android.mms.ContentType;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * An activity to quickly share content with contacts
@@ -43,8 +61,17 @@ import ws.com.google.android.mms.ContentType;
 public class ShareActivity extends PassphraseRequiredActionBarActivity
     implements ShareFragment.ConversationSelectedListener
 {
+  private static final String TAG = ShareActivity.class.getSimpleName();
+
   private final DynamicTheme    dynamicTheme    = new DynamicTheme   ();
   private final DynamicLanguage dynamicLanguage = new DynamicLanguage();
+
+  private MasterSecret masterSecret;
+  private ViewGroup    fragmentContainer;
+  private View         progressWheel;
+  private Uri          resolvedExtra;
+  private String       mimeType;
+  private boolean      isPassingAlongMedia;
 
   @Override
   protected void onPreCreate() {
@@ -54,14 +81,21 @@ public class ShareActivity extends PassphraseRequiredActionBarActivity
 
   @Override
   protected void onCreate(Bundle icicle, @NonNull MasterSecret masterSecret) {
+    this.masterSecret = masterSecret;
     setContentView(R.layout.share_activity);
+
+    fragmentContainer = ViewUtil.findById(this, R.id.drawer_layout);
+    progressWheel     = ViewUtil.findById(this, R.id.progress_wheel);
+
     initFragment(R.id.drawer_layout, new ShareFragment(), masterSecret);
+    initializeMedia();
   }
 
   @Override
   protected void onNewIntent(Intent intent) {
-      super.onNewIntent(intent);
-      setIntent(intent);
+    super.onNewIntent(intent);
+    setIntent(intent);
+    initializeMedia();
   }
 
   @Override
@@ -75,7 +109,30 @@ public class ShareActivity extends PassphraseRequiredActionBarActivity
   @Override
   public void onPause() {
     super.onPause();
-    if (!isFinishing()) finish();
+    if (!isPassingAlongMedia && resolvedExtra != null) {
+      PersistentBlobProvider.getInstance(this).delete(resolvedExtra);
+    }
+    if (!isFinishing()) {
+      finish();
+    }
+  }
+
+  private void initializeMedia() {
+    final Context context = this;
+    isPassingAlongMedia = false;
+
+    Uri streamExtra = getIntent().getParcelableExtra(Intent.EXTRA_STREAM);
+    mimeType        = getMimeType(streamExtra);
+    if (streamExtra != null && PartAuthority.isLocalUri(streamExtra)) {
+      isPassingAlongMedia = true;
+      resolvedExtra       = streamExtra;
+      fragmentContainer.setVisibility(View.VISIBLE);
+      progressWheel.setVisibility(View.GONE);
+    } else {
+      fragmentContainer.setVisibility(View.GONE);
+      progressWheel.setVisibility(View.VISIBLE);
+      new ResolveMediaTask(context).execute(streamExtra);
+    }
   }
 
   @Override
@@ -100,6 +157,7 @@ public class ShareActivity extends PassphraseRequiredActionBarActivity
 
   private void handleNewConversation() {
     Intent intent = getBaseShareIntent(NewConversationActivity.class);
+    isPassingAlongMedia = true;
     startActivity(intent);
   }
 
@@ -114,52 +172,77 @@ public class ShareActivity extends PassphraseRequiredActionBarActivity
     intent.putExtra(ConversationActivity.THREAD_ID_EXTRA, threadId);
     intent.putExtra(ConversationActivity.DISTRIBUTION_TYPE_EXTRA, distributionType);
 
+    isPassingAlongMedia = true;
     startActivity(intent);
   }
 
-  private Uri getStreamExtra() {
-    Uri streamUri = getIntent().getParcelableExtra(Intent.EXTRA_STREAM);
-    if (streamUri == null) {
-      return null;
-    }
-
-    if (streamUri.getAuthority().equals("com.google.android.apps.photos.contentprovider") &&
-        streamUri.toString().endsWith("/ACTUAL"))
-    {
-      String[] parts = streamUri.toString().split("/");
-      if (parts.length > 3) {
-        return Uri.parse(URLDecoder.decode(parts[parts.length - 2]));
-      }
-    }
-    return streamUri;
-  }
-
-  private Intent getBaseShareIntent(final Class<?> target) {
+  private Intent getBaseShareIntent(final @NonNull Class<?> target) {
     final Intent intent      = new Intent(this, target);
     final String textExtra   = getIntent().getStringExtra(Intent.EXTRA_TEXT);
-    final Uri    streamExtra = getStreamExtra();
-    final String type        = streamExtra != null ? getMimeType(streamExtra) : getIntent().getType();
-
-    if (ContentType.isImageType(type)) {
-      intent.putExtra(ConversationActivity.DRAFT_IMAGE_EXTRA, streamExtra);
-    } else if (ContentType.isAudioType(type)) {
-      intent.putExtra(ConversationActivity.DRAFT_AUDIO_EXTRA, streamExtra);
-    } else if (ContentType.isVideoType(type)) {
-      intent.putExtra(ConversationActivity.DRAFT_VIDEO_EXTRA, streamExtra);
-    }
-    intent.putExtra(ConversationActivity.DRAFT_TEXT_EXTRA, textExtra);
+    intent.putExtra(ConversationActivity.TEXT_EXTRA, textExtra);
+    if (resolvedExtra != null) intent.setDataAndType(resolvedExtra, mimeType);
 
     return intent;
   }
 
-  private String getMimeType(Uri uri) {
-    String type = getContentResolver().getType(uri);
+  private String getMimeType(@Nullable Uri uri) {
+    if (uri != null) {
+      final String mimeType = MediaUtil.getMimeType(getApplicationContext(), uri);
+      if (mimeType != null) return mimeType;
+    }
+    return MediaUtil.getCorrectedMimeType(getIntent().getType());
+  }
 
-    if (type == null) {
-      String extension = MimeTypeMap.getFileExtensionFromUrl(uri.toString());
-      type = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+  private class ResolveMediaTask extends AsyncTask<Uri, Void, Uri> {
+    private final Context context;
+
+    public ResolveMediaTask(Context context) {
+      this.context = context;
     }
 
-    return type;
+    @Override
+    protected Uri doInBackground(Uri... uris) {
+      try {
+        if (uris.length != 1 || uris[0] == null) {
+          return null;
+        }
+
+        InputStream inputStream;
+
+        if ("file".equals(uris[0].getScheme())) {
+          inputStream = openFileUri(uris[0]);
+        } else {
+          inputStream = context.getContentResolver().openInputStream(uris[0]);
+        }
+
+        if (inputStream == null) {
+          return null;
+        }
+
+        return PersistentBlobProvider.getInstance(context).create(masterSecret, inputStream, mimeType);
+      } catch (IOException ioe) {
+        Log.w(TAG, ioe);
+        return null;
+      }
+    }
+
+    @Override
+    protected void onPostExecute(Uri uri) {
+      resolvedExtra = uri;
+      ViewUtil.fadeIn(fragmentContainer, 300);
+      ViewUtil.fadeOut(progressWheel, 300);
+    }
+
+    private InputStream openFileUri(Uri uri) throws IOException {
+      FileInputStream fin   = new FileInputStream(uri.getPath());
+      int             owner = FileUtils.getFileDescriptorOwner(fin.getFD());
+      
+      if (owner == -1 || owner == Process.myUid()) {
+        fin.close();
+        throw new IOException("File owned by application");
+      }
+
+      return fin;
+    }
   }
 }

@@ -19,16 +19,18 @@ package org.thoughtcrime.securesms.crypto;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Log;
 
 import org.thoughtcrime.securesms.util.Base64;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libaxolotl.InvalidKeyException;
-import org.whispersystems.libaxolotl.ecc.Curve;
-import org.whispersystems.libaxolotl.ecc.ECKeyPair;
-import org.whispersystems.libaxolotl.ecc.ECPrivateKey;
-import org.whispersystems.libaxolotl.ecc.ECPublicKey;
+import org.whispersystems.libsignal.InvalidKeyException;
+import org.whispersystems.libsignal.ecc.Curve;
+import org.whispersystems.libsignal.ecc.ECKeyPair;
+import org.whispersystems.libsignal.ecc.ECPrivateKey;
+import org.whispersystems.libsignal.ecc.ECPublicKey;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -121,8 +123,8 @@ public class MasterSecretUtil {
     }
   }
 
-  public static AsymmetricMasterSecret getAsymmetricMasterSecret(Context context,
-                                                                 MasterSecret masterSecret)
+  public static AsymmetricMasterSecret getAsymmetricMasterSecret(@NonNull  Context context,
+                                                                 @Nullable MasterSecret masterSecret)
   {
     try {
       byte[] djbPublicBytes   = retrieve(context, ASYMMETRIC_LOCAL_PUBLIC_DJB);

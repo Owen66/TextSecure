@@ -1,7 +1,8 @@
 package org.thoughtcrime.securesms;
 
 import android.content.Intent;
-import android.os.Build;
+import android.os.Build.VERSION;
+import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityOptionsCompat;
@@ -11,6 +12,7 @@ import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.view.View;
 import android.view.WindowManager;
 
 import org.thoughtcrime.securesms.crypto.MasterSecret;
@@ -55,6 +57,7 @@ public class ConversationPopupActivity extends ConversationActivity {
   protected void onResume() {
     super.onResume();
     composeText.requestFocus();
+    quickAttachmentToggle.disable();
   }
 
   @Override
@@ -84,7 +87,7 @@ public class ConversationPopupActivity extends ConversationActivity {
             intent.putExtra(ConversationActivity.RECIPIENTS_EXTRA, getRecipients().getIds());
             intent.putExtra(ConversationActivity.THREAD_ID_EXTRA, result);
 
-            if ( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN) {
               startActivity(intent, transition.toBundle());
             } else {
               startActivity(intent);
@@ -115,5 +118,10 @@ public class ConversationPopupActivity extends ConversationActivity {
   protected void sendComplete(long threadId) {
     super.sendComplete(threadId);
     finish();
+  }
+
+  @Override
+  protected void updateInviteReminder(boolean seenInvite) {
+    reminderView.setVisibility(View.GONE);
   }
 }

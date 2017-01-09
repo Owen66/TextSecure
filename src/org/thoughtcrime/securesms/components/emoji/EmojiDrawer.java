@@ -14,12 +14,11 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.ImageView.ScaleType;
 import android.widget.LinearLayout;
-import android.widget.RelativeLayout;
 
 import com.astuetz.PagerSlidingTabStrip;
 
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.components.KeyboardAwareLinearLayout;
+import org.thoughtcrime.securesms.components.InputAwareLayout.InputView;
 import org.thoughtcrime.securesms.components.RepeatableImageKey;
 import org.thoughtcrime.securesms.components.RepeatableImageKey.KeyEventListener;
 import org.thoughtcrime.securesms.components.emoji.EmojiPageView.EmojiSelectionListener;
@@ -28,81 +27,86 @@ import org.thoughtcrime.securesms.util.ResUtil;
 import java.util.LinkedList;
 import java.util.List;
 
-public class EmojiDrawer extends KeyboardAwareLinearLayout {
+public class EmojiDrawer extends LinearLayout implements InputView {
   private static final KeyEvent DELETE_KEY_EVENT = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL);
 
-  private EmojiEditText             composeText;
-  private KeyboardAwareLinearLayout container;
-  private ViewPager                 pager;
-  private List<EmojiPageModel>      models;
-  private PagerSlidingTabStrip      strip;
-  private RecentEmojiPageModel      recentModel;
+  private ViewPager            pager;
+  private List<EmojiPageModel> models;
+  private PagerSlidingTabStrip strip;
+  private RecentEmojiPageModel recentModel;
+  private EmojiEventListener   listener;
+  private EmojiDrawerListener  drawerListener;
 
   public EmojiDrawer(Context context) {
-    super(context);
-    init();
+    this(context, null);
   }
 
   public EmojiDrawer(Context context, AttributeSet attrs) {
     super(context, attrs);
-    init();
+    setOrientation(VERTICAL);
   }
 
-  public EmojiDrawer(Context context, AttributeSet attrs, int defStyle) {
-    super(context, attrs, defStyle);
-    init();
-  }
-
-  public void setComposeEditText(EmojiEditText composeText) {
-    this.composeText = composeText;
-  }
-
-  private void init() {
+  private void initView() {
     final View v = LayoutInflater.from(getContext()).inflate(R.layout.emoji_drawer, this, true);
     initializeResources(v);
     initializePageModels();
     initializeEmojiGrid();
   }
 
+  public void setEmojiEventListener(EmojiEventListener listener) {
+    this.listener = listener;
+  }
+
+  public void setDrawerListener(EmojiDrawerListener listener) {
+    this.drawerListener = listener;
+  }
+
   private void initializeResources(View v) {
     Log.w("EmojiDrawer", "initializeResources()");
-    this.container = (KeyboardAwareLinearLayout) v.findViewById(R.id.container);
-    this.pager     = (ViewPager)                 v.findViewById(R.id.emoji_pager);
-    this.strip     = (PagerSlidingTabStrip)      v.findViewById(R.id.tabs);
+    this.pager     = (ViewPager)            v.findViewById(R.id.emoji_pager);
+    this.strip     = (PagerSlidingTabStrip) v.findViewById(R.id.tabs);
 
     RepeatableImageKey backspace = (RepeatableImageKey)v.findViewById(R.id.backspace);
     backspace.setOnKeyEventListener(new KeyEventListener() {
-      @Override public void onKeyEvent() {
-        if (composeText != null && composeText.getText().length() > 0) {
-          composeText.dispatchKeyEvent(DELETE_KEY_EVENT);
-        }
+      @Override
+      public void onKeyEvent() {
+        if (listener != null) listener.onKeyEvent(DELETE_KEY_EVENT);
       }
     });
   }
 
-  public void hide() {
-    container.setVisibility(View.GONE);
+  @Override
+  public boolean isShowing() {
+    return getVisibility() == VISIBLE;
   }
 
-  public void show() {
-    int keyboardHeight = container.getKeyboardHeight();
-    Log.w("EmojiDrawer", "setting emoji drawer to height " + keyboardHeight);
-    container.setLayoutParams(new LinearLayout.LayoutParams(RelativeLayout.LayoutParams.MATCH_PARENT, keyboardHeight));
-    container.requestLayout();
-    container.setVisibility(View.VISIBLE);
+  @Override
+  public void show(int height, boolean immediate) {
+    if (this.pager == null) initView();
+    ViewGroup.LayoutParams params = getLayoutParams();
+    params.height = height;
+    Log.w("EmojiDrawer", "showing emoji drawer with height " + params.height);
+    setLayoutParams(params);
+    setVisibility(VISIBLE);
+    if (drawerListener != null) drawerListener.onShown();
   }
 
-  public boolean isOpen() {
-    return container.getVisibility() == View.VISIBLE;
+  @Override
+  public void hide(boolean immediate) {
+    setVisibility(GONE);
+    if (drawerListener != null) drawerListener.onHidden();
+    Log.w("EmojiDrawer", "hide()");
   }
 
   private void initializeEmojiGrid() {
     pager.setAdapter(new EmojiPagerAdapter(getContext(),
                                            models,
                                            new EmojiSelectionListener() {
-                                             @Override public void onEmojiSelected(String emoji) {
+                                             @Override
+                                             public void onEmojiSelected(String emoji) {
+                                               Log.w("EmojiDrawer", "onEmojiSelected()");
                                                recentModel.onCodePointSelected(emoji);
-                                               composeText.insertEmoji(emoji);
+                                               if (listener != null) listener.onEmojiSelected(emoji);
                                              }
                                            }));
 
@@ -141,7 +145,8 @@ public class EmojiDrawer extends KeyboardAwareLinearLayout {
       return pages.size();
     }
 
-    @Override public Object instantiateItem(ViewGroup container, int position) {
+    @Override
+    public Object instantiateItem(ViewGroup container, int position) {
       EmojiPageView page = new EmojiPageView(context);
       page.setModel(pages.get(position));
       page.setEmojiSelectedListener(listener);
@@ -149,25 +154,38 @@ public class EmojiDrawer extends KeyboardAwareLinearLayout {
       return page;
     }
 
-    @Override public void destroyItem(ViewGroup container, int position, Object object) {
+    @Override
+    public void destroyItem(ViewGroup container, int position, Object object) {
       container.removeView((View)object);
     }
 
-    @Override public void setPrimaryItem(ViewGroup container, int position, Object object) {
+    @Override
+    public void setPrimaryItem(ViewGroup container, int position, Object object) {
       EmojiPageView current = (EmojiPageView) object;
       current.onSelected();
       super.setPrimaryItem(container, position, object);
     }
 
-    @Override public boolean isViewFromObject(View view, Object object) {
+    @Override
+    public boolean isViewFromObject(View view, Object object) {
       return view == object;
     }
 
-    @Override public View getCustomTabView(ViewGroup viewGroup, int i) {
-      ImageView image = new ImageView(context);
+    @Override
+    public View getCustomTabView(ViewGroup viewGroup, int i) {
+      ImageView  image = new ImageView(context);
       image.setScaleType(ScaleType.CENTER_INSIDE);
       image.setImageResource(ResUtil.getDrawableRes(context, pages.get(i).getIconAttr()));
       return image;
     }
+  }
+
+  public interface EmojiEventListener extends EmojiSelectionListener {
+    void onKeyEvent(KeyEvent keyEvent);
+  }
+
+  public interface EmojiDrawerListener {
+    void onShown();
+    void onHidden();
   }
 }

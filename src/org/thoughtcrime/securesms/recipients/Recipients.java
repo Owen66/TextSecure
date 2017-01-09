@@ -51,28 +51,42 @@ public class Recipients implements Iterable<Recipient>, RecipientModifiedListene
   private final Set<RecipientsModifiedListener> listeners = Collections.newSetFromMap(new WeakHashMap<RecipientsModifiedListener, Boolean>());
   private final List<Recipient> recipients;
 
-  private Uri          ringtone   = null;
-  private long         mutedUntil = 0;
-  private boolean      blocked    = false;
-  private VibrateState vibrate    = VibrateState.DEFAULT;
+  private Uri          ringtone       = null;
+  private long         mutedUntil     = 0;
+  private boolean      blocked        = false;
+  private VibrateState vibrate        = VibrateState.DEFAULT;
+  private int          expireMessages = 0;
+  private boolean      stale          = false;
 
   Recipients() {
-    this(new LinkedList<Recipient>(), (RecipientsPreferences)null);
+    this(new LinkedList<Recipient>(), null);
   }
 
   Recipients(List<Recipient> recipients, @Nullable RecipientsPreferences preferences) {
     this.recipients = recipients;
 
     if (preferences != null) {
-      ringtone   = preferences.getRingtone();
-      mutedUntil = preferences.getMuteUntil();
-      vibrate    = preferences.getVibrateState();
-      blocked    = preferences.isBlocked();
+      ringtone       = preferences.getRingtone();
+      mutedUntil     = preferences.getMuteUntil();
+      vibrate        = preferences.getVibrateState();
+      blocked        = preferences.isBlocked();
+      expireMessages = preferences.getExpireMessages();
     }
   }
 
-  Recipients(List<Recipient> recipients, ListenableFutureTask<RecipientsPreferences> preferences) {
+  Recipients(@NonNull  List<Recipient> recipients,
+             @Nullable Recipients stale,
+             @NonNull  ListenableFutureTask<RecipientsPreferences> preferences)
+  {
     this.recipients = recipients;
+
+    if (stale != null) {
+      ringtone       = stale.ringtone;
+      mutedUntil     = stale.mutedUntil;
+      vibrate        = stale.vibrate;
+      blocked        = stale.blocked;
+      expireMessages = stale.expireMessages;
+    }
 
     preferences.addListener(new FutureTaskListener<RecipientsPreferences>() {
       @Override
@@ -82,10 +96,11 @@ public class Recipients implements Iterable<Recipient>, RecipientModifiedListene
           Set<RecipientsModifiedListener> localListeners;
 
           synchronized (Recipients.this) {
-            ringtone   = result.getRingtone();
-            mutedUntil = result.getMuteUntil();
-            vibrate    = result.getVibrateState();
-            blocked    = result.isBlocked();
+            ringtone       = result.getRingtone();
+            mutedUntil     = result.getMuteUntil();
+            vibrate        = result.getVibrateState();
+            blocked        = result.isBlocked();
+            expireMessages = result.getExpireMessages();
 
             localListeners = new HashSet<>(listeners);
           }
@@ -167,6 +182,18 @@ public class Recipients implements Iterable<Recipient>, RecipientModifiedListene
     else if (!isEmpty())                                 recipients.get(0).setColor(color);
   }
 
+  public synchronized int getExpireMessages() {
+    return expireMessages;
+  }
+
+  public void setExpireMessages(int expireMessages) {
+    synchronized (this) {
+      this.expireMessages = expireMessages;
+    }
+
+    notifyListeners();
+  }
+
   public synchronized void addListener(RecipientsModifiedListener listener) {
     if (listeners.isEmpty()) {
       for (Recipient recipient : recipients) {
@@ -174,9 +201,7 @@ public class Recipients implements Iterable<Recipient>, RecipientModifiedListene
       }
     }
 
-    synchronized (this) {
-      listeners.add(listener);
-    }
+    listeners.add(listener);
   }
 
   public synchronized void removeListener(RecipientsModifiedListener listener) {
@@ -248,7 +273,7 @@ public class Recipients implements Iterable<Recipient>, RecipientModifiedListene
     return Util.join(recipientArray, " ");
   }
 
-  public String[] toNumberStringArray(boolean scrub) {
+  public @NonNull String[] toNumberStringArray(boolean scrub) {
     String[] recipientsArray     = new String[recipients.size()];
     Iterator<Recipient> iterator = recipients.iterator();
     int i                        = 0;
@@ -267,6 +292,13 @@ public class Recipients implements Iterable<Recipient>, RecipientModifiedListene
     }
 
     return recipientsArray;
+  }
+
+  public @NonNull List<String> toNumberStringList(boolean scrub) {
+    List<String> results = new LinkedList<>();
+    Collections.addAll(results, toNumberStringArray(scrub));
+
+    return results;
   }
 
   public String toShortString() {
@@ -304,6 +336,13 @@ public class Recipients implements Iterable<Recipient>, RecipientModifiedListene
     }
   }
 
+  boolean isStale() {
+    return stale;
+  }
+
+  void setStale() {
+    this.stale = true;
+  }
 
   public interface RecipientsModifiedListener {
     public void onModified(Recipients recipient);

@@ -17,6 +17,7 @@
 package org.thoughtcrime.securesms.util;
 
 import android.content.Context;
+import android.os.Build;
 import android.text.format.DateFormat;
 
 import java.text.SimpleDateFormat;
@@ -41,13 +42,13 @@ public class DateUtils extends android.text.format.DateUtils {
   }
 
   private static String getFormattedDateTime(long time, String template, Locale locale) {
-    String localizedPattern = new SimpleDateFormat(template, locale).toLocalizedPattern();
+    final String localizedPattern = getLocalizedPattern(template, locale);
     return new SimpleDateFormat(localizedPattern, locale).format(new Date(time));
   }
 
   public static String getBriefRelativeTimeSpanString(final Context c, final Locale locale, final long timestamp) {
     if (isWithin(timestamp, 1, TimeUnit.MINUTES)) {
-      return c.getString(R.string.DateUtils_now);
+      return c.getString(R.string.DateUtils_just_now);
     } else if (isWithin(timestamp, 1, TimeUnit.HOURS)) {
       int mins = convertDelta(timestamp, TimeUnit.MINUTES);
       return c.getResources().getString(R.string.DateUtils_minutes_ago, mins);
@@ -65,7 +66,7 @@ public class DateUtils extends android.text.format.DateUtils {
 
   public static String getExtendedRelativeTimeSpanString(final Context c, final Locale locale, final long timestamp) {
     if (isWithin(timestamp, 1, TimeUnit.MINUTES)) {
-      return c.getString(R.string.DateUtils_now);
+      return c.getString(R.string.DateUtils_just_now);
     } else if (isWithin(timestamp, 1, TimeUnit.HOURS)) {
       int mins = (int)TimeUnit.MINUTES.convert(System.currentTimeMillis() - timestamp, TimeUnit.MILLISECONDS);
       return c.getResources().getString(R.string.DateUtils_minutes_ago, mins);
@@ -82,16 +83,39 @@ public class DateUtils extends android.text.format.DateUtils {
     }
   }
 
+  public static String getDayPrecisionTimeSpanString(Context context, Locale locale, long timestamp) {
+    SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyyMMdd");
+
+    if (simpleDateFormat.format(System.currentTimeMillis()).equals(simpleDateFormat.format(timestamp))) {
+      return context.getString(R.string.DeviceListItem_today);
+    } else {
+      String format;
+
+      if      (isWithin(timestamp, 6, TimeUnit.DAYS))   format = "EEE ";
+      else if (isWithin(timestamp, 365, TimeUnit.DAYS)) format = "MMM d";
+      else                                              format = "MMM d, yyy";
+
+      return getFormattedDateTime(timestamp, format, locale);
+    }
+  }
+
   public static SimpleDateFormat getDetailedDateFormatter(Context context, Locale locale) {
     String dateFormatPattern;
 
     if (DateFormat.is24HourFormat(context)) {
-      dateFormatPattern = "MMM d, yyyy HH:mm:ss zzz";
+      dateFormatPattern = getLocalizedPattern("MMM d, yyyy HH:mm:ss zzz", locale);
     } else {
-      dateFormatPattern = "MMM d, yyyy hh:mm:ss a zzz";
+      dateFormatPattern = getLocalizedPattern("MMM d, yyyy hh:mm:ss a zzz", locale);
     }
 
     return new SimpleDateFormat(dateFormatPattern, locale);
   }
 
+  private static String getLocalizedPattern(String template, Locale locale) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+      return DateFormat.getBestDateTimePattern(locale, template);
+    } else {
+      return new SimpleDateFormat(template, locale).toLocalizedPattern();
+    }
+  }
 }

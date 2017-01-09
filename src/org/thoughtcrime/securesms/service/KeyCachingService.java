@@ -28,6 +28,7 @@ import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 import android.widget.RemoteViews;
@@ -40,11 +41,10 @@ import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.crypto.InvalidPassphraseException;
 import org.thoughtcrime.securesms.crypto.MasterSecret;
 import org.thoughtcrime.securesms.crypto.MasterSecretUtil;
+import org.thoughtcrime.securesms.jobs.MasterSecretDecryptJob;
 import org.thoughtcrime.securesms.notifications.MessageNotifier;
 import org.thoughtcrime.securesms.util.DynamicLanguage;
-import org.thoughtcrime.securesms.util.ParcelUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.jobqueue.EncryptionKeys;
 
 import java.util.concurrent.TimeUnit;
 
@@ -78,7 +78,7 @@ public class KeyCachingService extends Service {
 
   public KeyCachingService() {}
 
-  public static synchronized MasterSecret getMasterSecret(Context context) {
+  public static synchronized @Nullable MasterSecret getMasterSecret(Context context) {
     if (masterSecret == null && TextSecurePreferences.isPasswordDisabled(context)) {
       try {
         MasterSecret masterSecret = MasterSecretUtil.getMasterSecret(context, MasterSecretUtil.UNENCRYPTED_PASSPHRASE);
@@ -103,13 +103,14 @@ public class KeyCachingService extends Service {
       broadcastNewSecret();
       startTimeoutIfAppropriate();
 
+      if (!TextSecurePreferences.isPasswordDisabled(this)) {
+        ApplicationContext.getInstance(this).getJobManager().add(new MasterSecretDecryptJob(this));
+      }
+
       new AsyncTask<Void, Void, Void>() {
         @Override
         protected Void doInBackground(Void... params) {
           if (!DatabaseUpgradeActivity.isUpdate(KeyCachingService.this)) {
-            ApplicationContext.getInstance(KeyCachingService.this)
-                              .getJobManager()
-                              .setEncryptionKeys(new EncryptionKeys(ParcelUtil.serialize(masterSecret)));
             MessageNotifier.updateNotification(KeyCachingService.this, masterSecret);
           }
           return null;
@@ -237,12 +238,12 @@ public class KeyCachingService extends Service {
     NotificationCompat.Builder builder = new NotificationCompat.Builder(this);
 
     builder.setContentTitle(getString(R.string.KeyCachingService_passphrase_cached));
-    builder.setContentText(getString(R.string.KeyCachingService_textsecure_passphrase_cached));
+    builder.setContentText(getString(R.string.KeyCachingService_signal_passphrase_cached));
     builder.setSmallIcon(R.drawable.icon_cached);
     builder.setWhen(0);
     builder.setPriority(Notification.PRIORITY_MIN);
 
-    builder.addAction(R.drawable.ic_menu_lock_holo_dark, getString(R.string.KeyCachingService_lock), buildLockIntent());
+    builder.addAction(R.drawable.ic_menu_lock_dark, getString(R.string.KeyCachingService_lock), buildLockIntent());
     builder.setContentIntent(buildLaunchIntent());
 
     stopForeground(true);
@@ -264,17 +265,16 @@ public class KeyCachingService extends Service {
   }
 
   private void foregroundServiceLegacy() {
-    Notification notification  = new Notification(R.drawable.icon_cached,
-                                                  getString(R.string.KeyCachingService_textsecure_passphrase_cached),
-                                                  System.currentTimeMillis());
-    notification.setLatestEventInfo(getApplicationContext(),
-                                    getString(R.string.KeyCachingService_passphrase_cached),
-                                    getString(R.string.KeyCachingService_textsecure_passphrase_cached),
-                                    buildLaunchIntent());
-    notification.tickerText = null;
+    NotificationCompat.Builder builder = new NotificationCompat.Builder(this);
+    builder.setSmallIcon(R.drawable.icon_cached);
+    builder.setWhen(System.currentTimeMillis());
+
+    builder.setContentTitle(getString(R.string.KeyCachingService_passphrase_cached));
+    builder.setContentText(getString(R.string.KeyCachingService_signal_passphrase_cached));
+    builder.setContentIntent(buildLaunchIntent());
 
     stopForeground(true);
-    startForeground(SERVICE_RUNNING_ID, notification);
+    startForeground(SERVICE_RUNNING_ID, builder.build());
   }
 
   private void foregroundService() {

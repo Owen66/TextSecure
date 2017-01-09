@@ -7,31 +7,32 @@ import org.thoughtcrime.securesms.crypto.IdentityKeyUtil;
 import org.thoughtcrime.securesms.crypto.MasterSecret;
 import org.thoughtcrime.securesms.crypto.PreKeyUtil;
 import org.thoughtcrime.securesms.dependencies.InjectableType;
-import org.thoughtcrime.securesms.util.ParcelUtil;
+import org.thoughtcrime.securesms.jobs.requirements.MasterSecretRequirement;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.jobqueue.EncryptionKeys;
 import org.whispersystems.jobqueue.JobParameters;
 import org.whispersystems.jobqueue.requirements.NetworkRequirement;
-import org.whispersystems.libaxolotl.IdentityKeyPair;
-import org.whispersystems.libaxolotl.state.SignedPreKeyRecord;
-import org.whispersystems.textsecure.api.TextSecureAccountManager;
-import org.whispersystems.textsecure.api.push.exceptions.PushNetworkException;
+import org.whispersystems.libsignal.IdentityKeyPair;
+import org.whispersystems.libsignal.state.SignedPreKeyRecord;
+import org.whispersystems.signalservice.api.SignalServiceAccountManager;
+import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 
 import java.io.IOException;
 
 import javax.inject.Inject;
 
-public class CreateSignedPreKeyJob extends ContextJob implements InjectableType {
+public class CreateSignedPreKeyJob extends MasterSecretJob implements InjectableType {
+
+  private static final long serialVersionUID = 1L;
 
   private static final String TAG = CreateSignedPreKeyJob.class.getSimpleName();
 
-  @Inject transient TextSecureAccountManager accountManager;
+  @Inject transient SignalServiceAccountManager accountManager;
 
-  public CreateSignedPreKeyJob(Context context, MasterSecret masterSecret) {
+  public CreateSignedPreKeyJob(Context context) {
     super(context, JobParameters.newBuilder()
                                 .withPersistence()
                                 .withRequirement(new NetworkRequirement(context))
-                                .withEncryption(new EncryptionKeys(ParcelUtil.serialize(masterSecret)))
+                                .withRequirement(new MasterSecretRequirement(context))
                                 .withGroupId(CreateSignedPreKeyJob.class.getSimpleName())
                                 .create());
   }
@@ -40,16 +41,19 @@ public class CreateSignedPreKeyJob extends ContextJob implements InjectableType 
   public void onAdded() {}
 
   @Override
-  public void onRun() throws IOException {
-    MasterSecret masterSecret = ParcelUtil.deserialize(getEncryptionKeys().getEncoded(), MasterSecret.CREATOR);
-
+  public void onRun(MasterSecret masterSecret) throws IOException {
     if (TextSecurePreferences.isSignedPreKeyRegistered(context)) {
       Log.w(TAG, "Signed prekey already registered...");
       return;
     }
 
-    IdentityKeyPair    identityKeyPair    = IdentityKeyUtil.getIdentityKeyPair(context, masterSecret);
-    SignedPreKeyRecord signedPreKeyRecord = PreKeyUtil.generateSignedPreKey(context, masterSecret, identityKeyPair);
+    if (!TextSecurePreferences.isPushRegistered(context)) {
+      Log.w(TAG, "Not yet registered...");
+      return;
+    }
+
+    IdentityKeyPair    identityKeyPair    = IdentityKeyUtil.getIdentityKeyPair(context);
+    SignedPreKeyRecord signedPreKeyRecord = PreKeyUtil.generateSignedPreKey(context, identityKeyPair, true);
 
     accountManager.setSignedPreKey(signedPreKeyRecord);
     TextSecurePreferences.setSignedPreKeyRegistered(context, true);
@@ -59,7 +63,7 @@ public class CreateSignedPreKeyJob extends ContextJob implements InjectableType 
   public void onCanceled() {}
 
   @Override
-  public boolean onShouldRetry(Exception exception) {
+  public boolean onShouldRetryThrowable(Exception exception) {
     if (exception instanceof PushNetworkException) return true;
     return false;
   }
